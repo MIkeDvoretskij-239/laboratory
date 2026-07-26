@@ -1,0 +1,159 @@
+{% extends "analayzer/base.html" %}
+{% block title %}{{ compound.name }} — {{ batch.name }}{% endblock %}
+{% block content %}
+    <p class="mb-1"><a href="{% url 'sample-batch-detail' batch.pk %}">&larr; {{ batch.name }}</a></p>
+    <h1 class="h3 mb-3">{{ compound.name }} <span class="text-muted small">/ {{ batch.name }}</span></h1>
+
+    <ul class="nav nav-pills flex-wrap gap-1 mb-4">
+        {% for c in batch_compounds %}
+            <li class="nav-item">
+                <a class="nav-link py-1 px-2 small {% if c.pk == compound.pk %}active{% endif %}"
+                   href="{% url 'sample-batch-compound' batch.pk c.pk %}">{{ c.name }}</a>
+            </li>
+        {% endfor %}
+    </ul>
+
+    {% if curves %}
+        <div id="compare-chart" style="height: 560px;"></div>
+        <p id="samples-summary" class="text-muted small mb-0"></p>
+    {% else %}
+        <p class="text-muted">Для этого вещества пока нет ни одной калибровки — <a href="{% url 'compound-compare' compound.pk %}">создать на странице калибровки</a>.</p>
+    {% endif %}
+
+    <h2 class="h5 mt-4 mb-2">Пробы этой партии</h2>
+    <p class="text-muted small">
+        Имя/Area/IS Area можно поправить прямо тут, диапазон калибровки можно выбрать вручную
+        («— авто —» возвращает автоматический подбор), лишние строки (Blank, wash и т.п.) — удалить.
+    </p>
+    <form method="post" action="{% url 'sample-result-create' %}" class="card card-body mb-3">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <div class="d-flex flex-wrap align-items-end gap-2">
+            <div>
+                <label class="form-label small mb-1">Файл в этой партии</label>
+                <select name="upload" class="form-select form-select-sm">
+                    {% for upload in sample_uploads %}
+                        <option value="{{ upload.pk }}">{{ upload.label|default:upload.file.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <input type="hidden" name="compound" value="{{ compound.pk }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">+ Добавить точку «{{ compound.name }}»</button>
+        </div>
+    </form>
+    {% include "analayzer/_sample_results_table.html" with results=sample_results table_id="batch-compound-samples-table-el" %}
+
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+    <script>
+        const series = {{ series_json|safe }};
+        const mergedSeries = {{ merged_series_json|safe }};
+        const samples = {{ samples_json|safe }};
+        const traces = [];
+        const CURVE_COLORS = ["#0d6efd", "#198754", "#6f42c1", "#fd7e14", "#20c997", "#d63384", "#0dcaf0", "#6610f2"];
+
+        function lineXY(s) {
+            const xs = s.points.map(p => p.std_conc);
+            const xMax = Math.max(0, ...xs) * 1.1 || 1;
+            const lineX = Array.from({length: 50}, (_, i) => xMax * i / 49);
+            const lineY = lineX.map(x => s.k * x + s.b);
+            return [lineX, lineY];
+        }
+
+        series.forEach((s, curveIdx) => {
+            const color = CURVE_COLORS[curveIdx % CURVE_COLORS.length];
+            const hasRealSegments = (s.segments || []).length > 1;
+
+            const includedPts = s.points.filter(p => p.included && p.response !== null && p.response !== undefined);
+            traces.push({
+                x: includedPts.map(p => p.std_conc),
+                y: includedPts.map(p => p.response),
+                text: includedPts.map(p => p.name || ""),
+                hovertemplate: "%{text}<br>Std.Conc=%{x}<br>Response=%{y}<extra></extra>",
+                mode: "markers",
+                marker: {color: color},
+                name: `${s.label} (${s.status_display})`,
+                legendgroup: "curve-" + s.id,
+            });
+
+            if (s.k !== null && s.b !== null) {
+                const [lineX, lineY] = lineXY(s);
+                traces.push({
+                    x: lineX, y: lineY, mode: "lines",
+                    line: {color: color, width: hasRealSegments ? 1 : 2, dash: hasRealSegments ? "dot" : "solid"},
+                    name: hasRealSegments
+                        ? `${s.label}: общий фит (без диапазонов)`
+                        : `${s.label}: y=${s.k.toFixed(4)}x+${s.b.toFixed(4)}`,
+                    legendgroup: "curve-" + s.id,
+                });
+            }
+
+            if (hasRealSegments) {
+                s.segments.forEach(seg => {
+                    if (seg.k === null || seg.b === null) return;
+                    const segX = [seg.conc_min, seg.conc_max];
+                    const segY = segX.map(x => seg.k * x + seg.b);
+                    traces.push({
+                        x: segX, y: segY, mode: "lines",
+                        line: {color: color, width: 3},
+                        name: `${s.label} #${seg.index}: ${seg.conc_min.toFixed(3)}–${seg.conc_max.toFixed(3)}`,
+                        legendgroup: "curve-" + s.id,
+                    });
+                });
+            }
+        });
+
+        mergedSeries.forEach(m => {
+            if (m.k === null || m.b === null) return;
+            const segX = [m.conc_min, m.conc_max];
+            const segY = segX.map(x => m.k * x + m.b);
+            traces.push({
+                x: segX, y: segY, mode: "lines",
+                line: {color: "#dc3545", width: 4, dash: "dash"},
+                name: `Объединённый «${m.label}» (${m.status_display}): ${m.conc_min.toFixed(3)}–${m.conc_max.toFixed(3)}`,
+            });
+        });
+
+        // Real sample points from THIS batch, plotted at (computed
+        // concentration, response) so each one lands near whichever
+        // calibration line it was resolved against.
+        const SAMPLE_STATUS_STYLE = {
+            matched: {color: "#198754", label: "Пробы: определено"},
+            out_of_range: {color: "#fd7e14", label: "Пробы: вне диапазона"},
+            needs_review: {color: "#6c757d", label: "Пробы: нужна проверка"},
+            no_calibration: {color: "#212529", label: "Пробы: нет калибровки"},
+        };
+        const samplesByStatus = {};
+        samples.forEach(sample => {
+            if (sample.computed_conc === null || sample.computed_conc === undefined) return;
+            (samplesByStatus[sample.status] ??= []).push(sample);
+        });
+        Object.entries(samplesByStatus).forEach(([status, pts]) => {
+            const style = SAMPLE_STATUS_STYLE[status] || {color: "#adb5bd", label: `Пробы: ${status}`};
+            traces.push({
+                x: pts.map(p => p.computed_conc),
+                y: pts.map(p => p.response),
+                text: pts.map(p => `${p.name || "(без имени)"}${p.material_label ? " / " + p.material_label : ""}`),
+                hovertemplate: "%{text}<br>Conc≈%{x}<br>Response=%{y}<extra></extra>",
+                mode: "markers",
+                marker: {symbol: "diamond", size: 9, color: style.color, line: {width: 1, color: "#fff"}},
+                name: `${style.label} (${pts.length})`,
+            });
+        });
+
+        if (samples.length) {
+            const withoutConc = samples.length - samples.filter(s => s.computed_conc !== null && s.computed_conc !== undefined).length;
+            const summaryEl = document.getElementById("samples-summary");
+            summaryEl.textContent = `Проб этой партии для этого вещества: ${samples.length}` +
+                (withoutConc ? `, из них без подходящей калибровки (не показаны на графике): ${withoutConc}` : "") + ".";
+        }
+
+        if (document.getElementById("compare-chart")) {
+            Plotly.newPlot("compare-chart", traces, {
+                xaxis: {title: "Std.Conc"},
+                yaxis: {title: "Response"},
+                template: "plotly_white",
+                margin: {t: 30},
+            }, {responsive: true});
+        }
+    </script>
+{% endblock %}

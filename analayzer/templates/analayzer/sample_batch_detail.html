@@ -1,0 +1,101 @@
+{% extends "analayzer/base.html" %}
+{% block title %}{{ batch.name }}{% endblock %}
+{% block content %}
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h1 class="h3 mb-1">{{ batch.name }}</h1>
+            <p class="text-muted mb-0">
+                Создано {{ batch.created_by|default:"—" }}, {{ batch.created_at|date:"d.m.Y H:i" }}
+            </p>
+        </div>
+        <form method="post" action="{% url 'sample-batch-delete' batch.pk %}"
+              data-confirm-message="Удалить партию проб «{{ batch.name }}» вместе со всеми файлами и результатами? Это необратимо.">
+            {% csrf_token %}
+            <button type="button" class="btn btn-outline-danger btn-delete-batch">Удалить партию</button>
+        </form>
+    </div>
+
+    {% if batch_compounds %}
+        <div class="card mb-4">
+            <div class="card-header">График + пробы по веществу</div>
+            <div class="card-body">
+                <p class="text-muted small mb-2">
+                    Выбери вещество — откроется график его калибровок с наложенными пробами именно
+                    этой партии, и редактируемая таблица.
+                </p>
+                <ul class="nav nav-pills flex-wrap gap-1 mb-0">
+                    {% for c in batch_compounds %}
+                        <li class="nav-item">
+                            <a class="nav-link py-1 px-2 small" href="{% url 'sample-batch-compound' batch.pk c.pk %}">{{ c.name }}</a>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    {% endif %}
+
+    {% if uploads %}
+        <div class="card mb-4">
+            <div class="card-header">Загруженные файлы</div>
+            <ul class="list-group list-group-flush">
+                {% for upload in uploads %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>
+                            <strong>{{ upload.label|default:upload.file.name }}</strong>
+                            <span class="text-muted small">({{ upload.profile.name }}{% if upload.name_filter %}, фильтр «{{ upload.name_filter }}»{% endif %})</span>
+                        </span>
+                        {% if upload.parsed_ok %}
+                            <span class="badge bg-success">разобран</span>
+                        {% else %}
+                            <span class="badge bg-danger" title="{{ upload.error_message }}">ошибка разбора</span>
+                        {% endif %}
+                    </li>
+                    {% if not upload.parsed_ok and upload.error_message %}
+                        <li class="list-group-item text-danger small">{{ upload.error_message }}</li>
+                    {% endif %}
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    <div class="mb-3 d-flex gap-2">
+        <span class="badge text-bg-secondary status-badge">Нужна проверка: {{ status_counts.needs_review }}</span>
+        <span class="badge text-bg-success status-badge">Определено: {{ status_counts.matched }}</span>
+        <span class="badge text-bg-warning status-badge">Вне диапазона: {{ status_counts.out_of_range }}</span>
+        <span class="badge text-bg-dark status-badge">Нет калибровки: {{ status_counts.no_calibration }}</span>
+    </div>
+
+    <p class="text-muted small">
+        Имя/Area/IS Area можно поправить прямо тут, если в исходном файле ошибка — Response,
+        диапазон и концентрация пересчитываются сразу после изменения. Диапазон калибровки можно
+        выбрать вручную (например если авто-подбор пометил пробу «нужна проверка»), а «— авто —»
+        возвращает автоматический подбор. Лишние строки (Blank, wash и т.п.) можно просто удалить.
+    </p>
+
+    <form method="post" action="{% url 'sample-result-create' %}" class="card card-body mb-3">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <div class="d-flex flex-wrap align-items-end gap-2">
+            <div>
+                <label class="form-label small mb-1">Файл</label>
+                <select name="upload" class="form-select form-select-sm">
+                    {% for upload in uploads %}
+                        <option value="{{ upload.pk }}">{{ upload.label|default:upload.file.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small mb-1">Вещество</label>
+                <select name="compound" class="form-select form-select-sm">
+                    <option value="">(не задано)</option>
+                    {% for compound in compounds %}
+                        <option value="{{ compound.pk }}">{{ compound.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-sm btn-outline-secondary">+ Добавить точку</button>
+        </div>
+    </form>
+
+    {% include "analayzer/_sample_results_table.html" with table_id="samples-table-el" %}
+{% endblock %}

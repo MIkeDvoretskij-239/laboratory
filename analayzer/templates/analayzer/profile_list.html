@@ -1,0 +1,45 @@
+{% extends "analayzer/base.html" %}
+{% block title %}Профили колонок{% endblock %}
+{% block content %}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h3 mb-0">Профили колонок</h1>
+        <a href="{% url 'profile-create' %}" class="btn btn-primary">+ Новый профиль</a>
+    </div>
+    <p class="text-muted small">
+        Профиль описывает, какие колонки и в каком порядке идут в сыром экспорте прибора —
+        он присваивается файлу при загрузке батча. Заведи новый профиль для каждого формата экспорта,
+        который встречается у тебя на практике.
+    </p>
+
+    {% if profiles %}
+        <table class="table table-hover bg-white align-middle">
+            <thead>
+            <tr>
+                <th>Название</th>
+                <th>Колонок</th>
+                <th>Использований</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for profile in profiles %}
+                <tr>
+                    <td>{{ profile.name }}</td>
+                    <td>{{ profile.column_names|length }}</td>
+                    <td>{{ profile.upload_count }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'profile-edit' profile.pk %}" class="btn btn-sm btn-outline-secondary">Изменить</a>
+                        <form method="post" action="{% url 'profile-delete' profile.pk %}" class="d-inline"
+                              data-confirm-message="Удалить профиль «{{ profile.name }}»? Это необратимо.">
+                            {% csrf_token %}
+                            <button type="button" class="btn btn-sm btn-outline-danger btn-delete-batch">Удалить</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="text-muted">Профилей пока нет.</p>
+    {% endif %}
+{% endblock %}

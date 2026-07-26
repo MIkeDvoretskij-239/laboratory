@@ -1,0 +1,482 @@
+{% extends "analayzer/base.html" %}
+{% block title %}{{ compound.name }} — сравнение калибровок{% endblock %}
+{% block content %}
+    <p class="mb-1"><a href="{% url 'compound-list' %}">&larr; Все вещества</a></p>
+    <h1 class="h3 mb-3">{{ compound.name }}</h1>
+
+    <ul class="nav nav-pills flex-wrap gap-1 mb-4">
+        {% for c in all_compounds %}
+            <li class="nav-item">
+                <a class="nav-link py-1 px-2 small {% if c.pk == compound.pk %}active{% endif %}"
+                   href="{% url 'compound-compare' c.pk %}">{{ c.name }}</a>
+            </li>
+        {% endfor %}
+    </ul>
+
+    {% if curves %}
+        <div id="compare-chart" style="height: 560px;"></div>
+
+        <div class="card mb-4 mt-3">
+            <div class="card-header">Объединённые диапазоны (из нескольких материалов)</div>
+            {% if merged_segments %}
+                <table class="table table-sm mb-0">
+                    <thead>
+                    <tr>
+                        <th>Название</th>
+                        <th>Материалы</th>
+                        <th>От</th>
+                        <th>До</th>
+                        <th>k</th>
+                        <th>b</th>
+                        <th>R²</th>
+                        <th>Точек</th>
+                        <th>Статус</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for merged in merged_segments %}
+                        <tr>
+                            <td>{{ merged.label|default:"—" }}</td>
+                            <td class="small text-muted">{% for c in merged.curves.all %}{{ c.raw_upload.label }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+                            <td>{{ merged.conc_min|floatformat:3 }}</td>
+                            <td>{{ merged.conc_max|floatformat:3 }}</td>
+                            <td>{{ merged.k|floatformat:4|default:"—" }}</td>
+                            <td>{{ merged.b|floatformat:4|default:"—" }}</td>
+                            <td>{{ merged.r2|floatformat:4|default:"—" }}</td>
+                            <td>{{ merged.point_count }}</td>
+                            <td>
+                                {{ merged.get_status_display }}
+                                {% if merged.fit_error %}<div class="text-danger small">{{ merged.fit_error }}</div>{% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <form method="post" action="{% url 'merged-segment-set-status' merged.pk %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="status" value="approved">
+                                    <button type="submit" class="btn btn-sm btn-outline-success">✓</button>
+                                </form>
+                                <form method="post" action="{% url 'merged-segment-set-status' merged.pk %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="status" value="rejected">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">✗</button>
+                                </form>
+                                <form method="post" action="{% url 'merged-segment-delete' merged.pk %}" class="d-inline"
+                                      data-confirm-message="Удалить объединённый диапазон «{{ merged.label|default:merged.pk }}»?">
+                                    {% csrf_token %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger btn-delete-batch">&times;</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="card-body text-muted small py-2">Пока нет ни одного объединённого диапазона.</div>
+            {% endif %}
+            <form method="post" action="{% url 'merged-segment-create' compound.pk %}" class="card-body border-top" id="merged-segment-form">
+                {% csrf_token %}
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-4">
+                        <label class="form-label small mb-1">Название (необязательно)</label>
+                        <input type="text" name="label" class="form-control form-control-sm" placeholder="напр. Kate+Plazma 0.01-0.5">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1">От</label>
+                        <input type="number" step="any" name="conc_min" id="merged-conc-min" class="form-control form-control-sm">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1">До</label>
+                        <input type="number" step="any" name="conc_max" id="merged-conc-max" class="form-control form-control-sm">
+                    </div>
+                </div>
+                <label class="form-label small mb-1 d-block">Отметь точки минимум из двух материалов</label>
+                <div class="table-responsive mb-2" style="max-height: 18rem; overflow-y: auto;">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                        <tr><th></th><th>Материал</th><th>Name</th><th>Std.Conc</th><th>Response</th></tr>
+                        </thead>
+                        <tbody>
+                        {% for curve in curves %}
+                            {% for point in curve.points %}
+                                {% if point.included and point.response != None %}
+                                    <tr>
+                                        <td><input type="checkbox" class="form-check-input merge-point-cb" name="points" value="{{ curve.pk }}:{{ forloop.counter0 }}" data-std="{{ point.std_conc }}"></td>
+                                        <td>{{ curve.raw_upload.label }}</td>
+                                        <td class="small">{{ point.name|default:"—" }}</td>
+                                        <td>{{ point.std_conc|floatformat:4 }}</td>
+                                        <td>{{ point.response|floatformat:4 }}</td>
+                                    </tr>
+                                {% endif %}
+                            {% endfor %}
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <button type="submit" class="btn btn-sm btn-outline-secondary">+ Создать объединённый диапазон</button>
+                <span class="text-muted small" id="merged-selection-hint">Отмеченные точки усредняются в один общий фит; от/до подставятся сами.</span>
+            </form>
+        </div>
+
+        {# Сравнение кривых на эквивалентность материалов отключено #}
+
+        <div id="curve-blocks" class="mt-3"></div>
+
+        <template id="curve-block-template">
+            <div class="card mb-3 curve-block">
+                <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <div class="form-check d-flex align-items-center gap-2 mb-0">
+                        <input type="checkbox" class="form-check-input curve-visibility-toggle" checked>
+                        <strong class="curve-label"></strong>
+                        <span class="badge curve-status-badge"></span>
+                    </div>
+                    <div class="d-flex align-items-center gap-3 small">
+                        <!-- Сравнение на эквивалентность материалов отключено -->
+                        <!-- <label class="form-check d-flex align-items-center gap-1 mb-0">
+                            <input type="checkbox" class="form-check-input curve-compare-select">
+                            <span>сравнить</span>
+                        </label> -->
+                        <span>k=<span class="stat-k">—</span> b=<span class="stat-b">—</span> R²=<span class="stat-r2">—</span></span>
+                        <a href="#" class="btn btn-sm btn-outline-secondary curve-open-link">Открыть отдельно</a>
+                        <button type="button" class="btn btn-sm btn-outline-danger curve-reject-btn">Отклонить</button>
+                        <button type="button" class="btn btn-sm btn-success curve-approve-btn">Подтвердить</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-danger d-none stat-error"></div>
+                    <div class="alert alert-danger d-none save-error"></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered mb-2" style="table-layout: fixed;">
+                            <colgroup>
+                                <col style="width: 2.5rem;">
+                                <col style="width: 10rem;">
+                                <col style="width: 6rem;">
+                                <col style="width: 7rem;">
+                                <col style="width: 7rem;">
+                                <col style="width: 6rem;">
+                                <col style="width: 6rem;">
+                                <col style="width: 5rem;">
+                                <col style="width: 2.5rem;">
+                            </colgroup>
+                            <thead>
+                            <tr>
+                                <th></th>
+                                <th>Name</th>
+                                <th>Std.Conc</th>
+                                <th>Area</th>
+                                <th>IS Area</th>
+                                <th>Response</th>
+                                <th>Conc</th>
+                                <th>Dev%</th>
+                                <th></th>
+                            </tr>
+                            </thead>
+                            <tbody class="points-table"></tbody>
+                        </table>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary add-point-btn">+ Точка</button>
+                </div>
+            </div>
+        </template>
+    {% else %}
+        <p class="text-muted">Для этого вещества пока нет ни одной калибровки.</p>
+    {% endif %}
+
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+    <script>
+        const series = {{ series_json|safe }};
+        const mergedSeries = {{ merged_series_json|safe }};
+        const csrfToken = "{{ csrf_token }}";
+        const currentPath = "{{ request.path }}";
+        const traceIndexes = {}; // curveId -> {points: idx, line: idx, segments: [idx, ...]}
+        const traces = [];
+        const CURVE_COLORS = ["#0d6efd", "#198754", "#6f42c1", "#fd7e14", "#20c997", "#d63384", "#0dcaf0", "#6610f2"];
+
+        function fmt(value, digits) {
+            return (value === null || value === undefined || value === "") ? "—" : Number(value).toFixed(digits ?? 4);
+        }
+
+        function lineXY(s) {
+            const xs = s.points.map(p => p.std_conc);
+            const xMax = Math.max(0, ...xs) * 1.1 || 1;
+            const lineX = Array.from({length: 50}, (_, i) => xMax * i / 49);
+            const lineY = lineX.map(x => s.k * x + s.b);
+            return [lineX, lineY];
+        }
+
+        series.forEach((s, curveIdx) => {
+            const color = CURVE_COLORS[curveIdx % CURVE_COLORS.length];
+            const hasRealSegments = (s.segments || []).length > 1;
+
+            const includedPts = s.points.filter(p => p.included && p.response !== null && p.response !== undefined);
+            const pointsIdx = traces.length;
+            traces.push({
+                x: includedPts.map(p => p.std_conc),
+                y: includedPts.map(p => p.response),
+                text: includedPts.map(p => p.name || ""),
+                hovertemplate: "%{text}<br>Std.Conc=%{x}<br>Response=%{y}<extra></extra>",
+                mode: "markers",
+                marker: {color: color},
+                name: `${s.label} (${s.status_display})`,
+                legendgroup: "curve-" + s.id,
+            });
+
+            // The whole-range fit — de-emphasized (thin/dashed) once real
+            // segments exist, since it's then just a naive reference line,
+            // not what sample resolution actually uses.
+            const lineIdx = traces.length;
+            if (s.k !== null && s.b !== null) {
+                const [lineX, lineY] = lineXY(s);
+                traces.push({
+                    x: lineX, y: lineY, mode: "lines",
+                    line: {color: color, width: hasRealSegments ? 1 : 2, dash: hasRealSegments ? "dot" : "solid"},
+                    name: hasRealSegments
+                        ? `${s.label}: общий фит (без диапазонов)`
+                        : `${s.label}: y=${s.k.toFixed(4)}x+${s.b.toFixed(4)}`,
+                    legendgroup: "curve-" + s.id,
+                });
+            } else {
+                traces.push({x: [], y: [], mode: "lines", line: {color: color}, name: `${s.label} (нет фита)`, legendgroup: "curve-" + s.id});
+            }
+
+            // The real per-range calibration — each segment drawn only
+            // across its own conc_min-conc_max, so it's visually obvious
+            // which range a sample point actually landed in.
+            const segmentIdxs = [];
+            if (hasRealSegments) {
+                s.segments.forEach(seg => {
+                    if (seg.k === null || seg.b === null) return;
+                    segmentIdxs.push(traces.length);
+                    const segX = [seg.conc_min, seg.conc_max];
+                    const segY = segX.map(x => seg.k * x + seg.b);
+                    traces.push({
+                        x: segX, y: segY, mode: "lines",
+                        line: {color: color, width: 3},
+                        name: `${s.label} #${seg.index}: ${seg.conc_min.toFixed(3)}–${seg.conc_max.toFixed(3)}`,
+                        legendgroup: "curve-" + s.id,
+                    });
+                });
+            }
+
+            traceIndexes[s.id] = {points: pointsIdx, line: lineIdx, segments: segmentIdxs};
+        });
+
+        // Merged (cross-material) segments — drawn thick and dashed in a
+        // neutral color so they read as "the combined range" rather than
+        // belonging to any one material's own color.
+        mergedSeries.forEach(m => {
+            if (m.k === null || m.b === null) return;
+            const segX = [m.conc_min, m.conc_max];
+            const segY = segX.map(x => m.k * x + m.b);
+            traces.push({
+                x: segX, y: segY, mode: "lines",
+                line: {color: "#dc3545", width: 4, dash: "dash"},
+                name: `Объединённый «${m.label}» (${m.status_display}): ${m.conc_min.toFixed(3)}–${m.conc_max.toFixed(3)}`,
+            });
+        });
+
+        Plotly.newPlot("compare-chart", traces, {
+            xaxis: {title: "Std.Conc"},
+            yaxis: {title: "Response"},
+            template: "plotly_white",
+            margin: {t: 30},
+        }, {responsive: true});
+
+        function updateChartTraces(s) {
+            const idx = traceIndexes[s.id];
+            const includedPts = s.points.filter(p => p.included && p.response !== null && p.response !== undefined);
+            Plotly.restyle("compare-chart", {
+                x: [includedPts.map(p => p.std_conc)],
+                y: [includedPts.map(p => p.response)],
+                text: [includedPts.map(p => p.name || "")],
+                name: [`${s.label} (${s.status_display})`],
+            }, [idx.points]);
+
+            if (s.k !== null && s.b !== null) {
+                const [lineX, lineY] = lineXY(s);
+                Plotly.restyle("compare-chart", {
+                    x: [lineX], y: [lineY],
+                    name: [`${s.label}: y=${s.k.toFixed(4)}x+${s.b.toFixed(4)}`],
+                }, [idx.line]);
+            } else {
+                Plotly.restyle("compare-chart", {x: [[]], y: [[]], name: [`${s.label} (нет фита)`]}, [idx.line]);
+            }
+        }
+
+        function statusBadgeClass(status) {
+            return {approved: "text-bg-success", rejected: "text-bg-dark", ok: "text-bg-info", needs_review: "text-bg-warning"}[status] || "text-bg-secondary";
+        }
+
+        // Сравнение кривых на эквивалентность материалов отключено.
+        // const selectedForCompare = new Set();
+        // const compareBtn = document.getElementById("compare-selected-btn");
+        //
+        // function updateCompareBtn() {
+        //     if (selectedForCompare.size === 2) {
+        //         const [a, b] = Array.from(selectedForCompare);
+        //         compareBtn.href = `/equivalence/new/?a=${a}&b=${b}`;
+        //         compareBtn.classList.remove("disabled");
+        //     } else {
+        //         compareBtn.href = "#";
+        //         compareBtn.classList.add("disabled");
+        //     }
+        // }
+
+        function setupCurveBlock(s) {
+            const template = document.getElementById("curve-block-template");
+            const node = template.content.cloneNode(true);
+            const block = node.querySelector(".curve-block");
+
+            block.querySelector(".curve-label").textContent = s.label;
+            const badge = block.querySelector(".curve-status-badge");
+            badge.textContent = s.status_display;
+            badge.className = "badge curve-status-badge " + statusBadgeClass(s.status);
+            block.querySelector(".curve-open-link").href = `/curves/${s.id}/`;
+
+            const statK = block.querySelector(".stat-k");
+            const statB = block.querySelector(".stat-b");
+            const statR2 = block.querySelector(".stat-r2");
+            const errorBox = block.querySelector(".stat-error");
+            const saveErrorBox = block.querySelector(".save-error");
+            const tbody = block.querySelector(".points-table");
+            const addBtn = block.querySelector(".add-point-btn");
+            const visibilityToggle = block.querySelector(".curve-visibility-toggle");
+
+            statK.textContent = fmt(s.k);
+            statB.textContent = fmt(s.b);
+            statR2.textContent = fmt(s.r2);
+            if (s.fit_error) {
+                errorBox.textContent = s.fit_error;
+                errorBox.classList.remove("d-none");
+            }
+
+            function renderTable() {
+                tbody.innerHTML = "";
+                s.points.forEach((p, index) => {
+                    const tr = document.createElement("tr");
+                    tr.className = p.included ? "" : "point-row excluded";
+                    tr.innerHTML = `
+                        <td class="text-center"><input type="checkbox" class="form-check-input f-included" ${p.included ? "checked" : ""}></td>
+                        <td><input type="text" class="form-control form-control-sm f-name" value="${(p.name ?? "").replace(/"/g, "&quot;")}" placeholder="wash / blank / ..."></td>
+                        <td><input type="number" step="any" class="form-control form-control-sm f-std" value="${p.std_conc ?? ""}"></td>
+                        <td><input type="number" step="any" class="form-control form-control-sm f-area" value="${p.area ?? ""}"></td>
+                        <td><input type="number" step="any" class="form-control form-control-sm f-isarea" value="${p.is_area ?? ""}"></td>
+                        <td class="text-muted">${fmt(p.response)}</td>
+                        <td class="text-muted">${fmt(p.conc)}</td>
+                        <td class="text-muted">${fmt(p.dev_pct, 1)}</td>
+                        <td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger f-delete">&times;</button></td>
+                    `;
+                    tbody.appendChild(tr);
+
+                    tr.querySelector(".f-included").addEventListener("change", (e) => {
+                        s.points[index].included = e.target.checked;
+                        saveAllPoints();
+                    });
+                    ["f-name", "f-std", "f-area", "f-isarea"].forEach((cls, fieldIdx) => {
+                        const field = ["name", "std_conc", "area", "is_area"][fieldIdx];
+                        tr.querySelector("." + cls).addEventListener("change", (e) => {
+                            s.points[index][field] = e.target.value;
+                            saveAllPoints();
+                        });
+                    });
+                    tr.querySelector(".f-delete").addEventListener("click", () => {
+                        s.points.splice(index, 1);
+                        renderTable();
+                        saveAllPoints();
+                    });
+                });
+            }
+
+            function applyResult(result) {
+                s.points = result.points;
+                s.k = result.k;
+                s.b = result.b;
+                s.r2 = result.r2;
+                s.status = result.status;
+                s.status_display = result.status_display;
+                s.fit_error = result.error;
+
+                statK.textContent = fmt(result.k);
+                statB.textContent = fmt(result.b);
+                statR2.textContent = fmt(result.r2);
+                badge.textContent = result.status_display;
+                badge.className = "badge curve-status-badge " + statusBadgeClass(result.status);
+
+                if (result.error) {
+                    errorBox.textContent = result.error;
+                    errorBox.classList.remove("d-none");
+                } else {
+                    errorBox.classList.add("d-none");
+                }
+                saveErrorBox.classList.add("d-none");
+
+                renderTable();
+                updateChartTraces(s);
+            }
+
+            function saveAllPoints() {
+                const payload = s.points.map(p => ({
+                    name: p.name, std_conc: p.std_conc, area: p.area, is_area: p.is_area, included: p.included,
+                }));
+                fetch(`/curves/${s.id}/update-points/`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken},
+                    body: JSON.stringify({points: payload}),
+                })
+                    .then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.json(); })
+                    .then(applyResult)
+                    .catch(err => {
+                        saveErrorBox.textContent = err.message || "Не удалось сохранить изменения.";
+                        saveErrorBox.classList.remove("d-none");
+                    });
+            }
+
+            addBtn.addEventListener("click", () => {
+                s.points.push({name: "", std_conc: "", area: "", is_area: "", response: null, conc: null, dev_pct: null, included: true});
+                renderTable();
+            });
+
+            visibilityToggle.addEventListener("change", (e) => {
+                const idx = traceIndexes[s.id];
+                Plotly.restyle("compare-chart", {visible: e.target.checked}, [idx.points, idx.line, ...idx.segments]);
+            });
+
+            // Сравнение на эквивалентность материалов отключено.
+            // block.querySelector(".curve-compare-select").addEventListener("change", (e) => {
+            //     if (e.target.checked) {
+            //         selectedForCompare.add(s.id);
+            //     } else {
+            //         selectedForCompare.delete(s.id);
+            //     }
+            //     updateCompareBtn();
+            // });
+
+            function setStatus(status) {
+                fetch(`/curves/${s.id}/set-status/`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": csrfToken},
+                    body: new URLSearchParams({status: status, next: currentPath}),
+                })
+                    .then(() => window.location.reload());
+            }
+            block.querySelector(".curve-approve-btn").addEventListener("click", () => setStatus("approved"));
+            block.querySelector(".curve-reject-btn").addEventListener("click", () => setStatus("rejected"));
+
+            renderTable();
+            document.getElementById("curve-blocks").appendChild(node);
+        }
+
+        series.forEach(setupCurveBlock);
+
+        document.querySelectorAll(".merge-point-cb").forEach(cb => {
+            cb.addEventListener("change", () => {
+                const checked = Array.from(document.querySelectorAll(".merge-point-cb:checked"));
+                const stds = checked.map(c => parseFloat(c.dataset.std)).filter(v => !isNaN(v));
+                if (stds.length) {
+                    document.getElementById("merged-conc-min").value = Math.min(...stds);
+                    document.getElementById("merged-conc-max").value = Math.max(...stds);
+                }
+                document.getElementById("merged-selection-hint").textContent = `Отмечено точек: ${checked.length}.`;
+            });
+        });
+    </script>
+{% endblock %}

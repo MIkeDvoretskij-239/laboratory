@@ -1,0 +1,40 @@
+{% extends "analayzer/base.html" %}
+{% block title %}Батчи калибровок{% endblock %}
+{% block content %}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h3 mb-0">Батчи калибровок</h1>
+        <a href="{% url 'batch-create' %}" class="btn btn-primary">+ Новая калибровка</a>
+    </div>
+
+    {% if batches %}
+        <table class="table table-hover align-middle bg-white">
+            <thead>
+            <tr>
+                <th>Название</th>
+                <th>Создал</th>
+                <th>Дата</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for batch in batches %}
+                <tr>
+                    <td><a href="{% url 'batch-detail' batch.pk %}">{{ batch.name }}</a></td>
+                    <td>{{ batch.created_by|default:"—" }}</td>
+                    <td>{{ batch.created_at|date:"d.m.Y H:i" }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'batch-detail' batch.pk %}" class="btn btn-sm btn-outline-secondary">Открыть</a>
+                        <form method="post" action="{% url 'batch-delete' batch.pk %}" class="d-inline"
+                              data-confirm-message="Удалить батч «{{ batch.name }}» вместе со всеми файлами и кривыми? Это необратимо.">
+                            {% csrf_token %}
+                            <button type="button" class="btn btn-sm btn-outline-danger btn-delete-batch">Удалить</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="text-muted">Пока нет ни одной калибровки. Нажми «Новая калибровка», чтобы загрузить первые файлы.</p>
+    {% endif %}
+{% endblock %}

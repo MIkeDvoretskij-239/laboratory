@@ -1,0 +1,94 @@
+{% extends "analayzer/base.html" %}
+{% block title %}Сравнение калибровок{% endblock %}
+{% block content %}
+    <p class="mb-1"><a href="{% url 'equivalence-list' %}">&larr; История сравнений</a></p>
+    <h1 class="h3 mb-4">Сравнить две калибровки</h1>
+    <p class="text-muted small">
+        Выбери две кривые одного вещества на разных материалах (или два конкретных диапазона —
+        если кривая уже разбита на сегменты). Логику сравнения считает
+        <code>services/equivalence.py</code>.
+    </p>
+
+    <form method="post" id="equivalence-form">
+        {% csrf_token %}
+        <div class="row g-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">Калибровка A</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label small">Кривая</label>
+                            <select name="curve_a" id="curve_a" class="form-select" required></select>
+                        </div>
+                        <div class="mb-0">
+                            <label class="form-label small">Сегмент (необязательно — иначе вся кривая)</label>
+                            <select name="segment_a" id="segment_a" class="form-select">
+                                <option value="">— вся кривая —</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">Калибровка B</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label small">Кривая</label>
+                            <select name="curve_b" id="curve_b" class="form-select" required></select>
+                        </div>
+                        <div class="mb-0">
+                            <label class="form-label small">Сегмент (необязательно — иначе вся кривая)</label>
+                            <select name="segment_b" id="segment_b" class="form-select">
+                                <option value="">— вся кривая —</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary mt-4">Сравнить</button>
+    </form>
+
+    <script>
+        const curveOptions = {{ curve_options_json|safe }};
+        const segmentsByCurve = {{ segments_json|safe }};
+        const initialA = "{{ initial_a }}";
+        const initialB = "{{ initial_b }}";
+
+        function fillCurveSelect(select, initial) {
+            select.innerHTML = "";
+            curveOptions.forEach(c => {
+                const opt = document.createElement("option");
+                opt.value = c.id;
+                opt.textContent = c.label;
+                if (String(c.id) === initial) opt.selected = true;
+                select.appendChild(opt);
+            });
+        }
+
+        function fillSegmentSelect(select, curveId) {
+            select.innerHTML = '<option value="">— вся кривая —</option>';
+            const segments = segmentsByCurve[curveId] || [];
+            segments.forEach(s => {
+                const opt = document.createElement("option");
+                opt.value = s.id;
+                opt.textContent = s.label;
+                select.appendChild(opt);
+            });
+        }
+
+        const curveA = document.getElementById("curve_a");
+        const curveB = document.getElementById("curve_b");
+        const segmentA = document.getElementById("segment_a");
+        const segmentB = document.getElementById("segment_b");
+
+        fillCurveSelect(curveA, initialA);
+        fillCurveSelect(curveB, initialB);
+        fillSegmentSelect(segmentA, curveA.value);
+        fillSegmentSelect(segmentB, curveB.value);
+
+        curveA.addEventListener("change", () => fillSegmentSelect(segmentA, curveA.value));
+        curveB.addEventListener("change", () => fillSegmentSelect(segmentB, curveB.value));
+    </script>
+{% endblock %}

@@ -1,0 +1,120 @@
+{% extends "analayzer/base.html" %}
+{% block title %}Новая партия проб{% endblock %}
+{% block content %}
+    <h1 class="h3 mb-4">Новая партия проб</h1>
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Название</label>
+                    {{ batch_form.name }}
+                    {{ batch_form.name.errors }}
+                </div>
+                <div class="mb-0">
+                    <label class="form-label">Заметки (необязательно)</label>
+                    {{ batch_form.notes }}
+                </div>
+            </div>
+        </div>
+
+        <h2 class="h5 mb-3">Файлы</h2>
+        <p class="text-muted small">
+            Файл с пробами из того же экспорта прибора, что и калибровки — Std.Conc можно не заполнять,
+            это как раз то, что мы вычисляем. Профиль колонок должен соответствовать формату файла.
+        </p>
+
+        {{ formset.management_form }}
+        {% if formset.non_form_errors %}
+            <div class="alert alert-danger">{{ formset.non_form_errors }}</div>
+        {% endif %}
+
+        <div id="upload-rows">
+            {% for form in formset %}
+                <div class="card mb-3 upload-row">
+                    <div class="card-body">
+                        {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+                        <div class="row g-3 align-items-start">
+                            <div class="col-md-3">
+                                <label class="form-label small">Метка (необязательно)</label>
+                                {{ form.label }}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small">Файл (.xlsx)</label>
+                                {{ form.file }}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small">Профиль колонок</label>
+                                {{ form.profile }}
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small">Фильтр по Name</label>
+                                {{ form.name_filter }}
+                            </div>
+                            <div class="col-md-1 d-flex align-items-end h-100">
+                                {% if form.instance.pk %}
+                                    <div class="form-check">
+                                        {{ form.DELETE }}
+                                        <label class="form-check-label small">Удалить</label>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% for field in form %}{{ field.errors }}{% endfor %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+
+        <button type="button" id="add-row" class="btn btn-sm btn-outline-secondary mb-4">+ Ещё файл</button>
+
+        <div class="d-flex justify-content-between mt-2">
+            <a href="{% url 'sample-batch-list' %}" class="btn btn-outline-secondary">Отмена</a>
+            <button type="submit" class="btn btn-primary">Загрузить и обработать</button>
+        </div>
+    </form>
+
+    <template id="empty-row-template">
+        <div class="card mb-3 upload-row">
+            <div class="card-body">
+                <div class="row g-3 align-items-start">
+                    <div class="col-md-3">
+                        <label class="form-label small">Метка (необязательно)</label>
+                        {{ formset.empty_form.label }}
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Файл (.xlsx)</label>
+                        {{ formset.empty_form.file }}
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Профиль колонок</label>
+                        {{ formset.empty_form.profile }}
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">Фильтр по Name</label>
+                        {{ formset.empty_form.name_filter }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <script>
+        (function () {
+            const totalFormsInput = document.querySelector('#id_uploads-TOTAL_FORMS');
+            const rowsContainer = document.querySelector('#upload-rows');
+            const template = document.querySelector('#empty-row-template');
+
+            document.querySelector('#add-row').addEventListener('click', function () {
+                const formIndex = parseInt(totalFormsInput.value, 10);
+                const html = template.innerHTML.replace(/__prefix__/g, formIndex);
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = html.trim();
+                rowsContainer.appendChild(wrapper.firstElementChild);
+                totalFormsInput.value = formIndex + 1;
+            });
+        })();
+    </script>
+{% endblock %}

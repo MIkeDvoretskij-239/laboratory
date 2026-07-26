@@ -1,0 +1,393 @@
+{% extends "analayzer/base.html" %}
+{% block title %}{{ curve.compound.name }} — {{ curve.raw_upload.label }}{% endblock %}
+{% block content %}
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <p class="mb-1">
+                <a href="{% url 'batch-detail' curve.raw_upload.batch_id %}">&larr; {{ curve.raw_upload.batch.name }}</a>
+            </p>
+            <h1 class="h3 mb-0">{{ curve.compound.name }} <span class="text-muted">/ {{ curve.raw_upload.label }}</span></h1>
+        </div>
+        <div class="d-flex gap-2">
+            {% comment %}
+            Автоматическое разбиение на диапазоны отключено — диапазоны создаются только вручную ниже.
+            <form method="post" action="{% url 'curve-recompute-segments' curve.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline-primary">Пересчитать диапазоны</button>
+            </form>
+            {% endcomment %}
+            <form method="post" action="{% url 'curve-set-status' curve.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="status" value="rejected">
+                <button type="submit" class="btn btn-outline-danger">Отклонить</button>
+            </form>
+            <form method="post" action="{% url 'curve-set-status' curve.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="status" value="approved">
+                <button type="submit" class="btn btn-success">Подтвердить</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header">Диапазоны калибровки</div>
+        {% if segments %}
+            <table class="table table-sm mb-0">
+                <thead>
+                <tr>
+                    <th>#</th>
+                    <th>От</th>
+                    <th>До</th>
+                    <th>k</th>
+                    <th>b</th>
+                    <th>R²</th>
+                    <th>Статус</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for segment in segments %}
+                    <tr>
+                        <td>{{ segment.index }}</td>
+                        <td>{{ segment.conc_min|floatformat:3 }}</td>
+                        <td>{{ segment.conc_max|floatformat:3 }}</td>
+                        <td>{{ segment.k|floatformat:4|default:"—" }}</td>
+                        <td>{{ segment.b|floatformat:4|default:"—" }}</td>
+                        <td>{{ segment.r2|floatformat:4|default:"—" }}</td>
+                        <td>
+                            {{ segment.get_status_display }}
+                            {% if segment.fit_error %}<div class="text-danger small">{{ segment.fit_error }}</div>{% endif %}
+                        </td>
+                        <td class="text-end">
+                            <form method="post" action="{% url 'curve-segment-delete' segment.pk %}"
+                                  data-confirm-message="Удалить диапазон #{{ segment.index }} ({{ segment.conc_min|floatformat:3 }}–{{ segment.conc_max|floatformat:3 }})?">
+                                {% csrf_token %}
+                                <button type="button" class="btn btn-sm btn-outline-danger btn-delete-batch">&times;</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="card-body text-muted small py-2">Диапазоны ещё не добавлены — добавь диапазон вручную ниже.</div>
+        {% endif %}
+        <form method="post" action="{% url 'curve-segment-create' curve.pk %}" id="segment-create-form" class="card-body border-top d-flex flex-wrap align-items-end gap-2 py-2">
+            {% csrf_token %}
+            <input type="hidden" name="point_indices" id="segment-point-indices">
+            <div>
+                <label class="form-label small mb-1">От</label>
+                <input type="number" step="any" name="conc_min" id="segment-conc-min" class="form-control form-control-sm" style="width: 8rem;">
+            </div>
+            <div>
+                <label class="form-label small mb-1">До</label>
+                <input type="number" step="any" name="conc_max" id="segment-conc-max" class="form-control form-control-sm" style="width: 8rem;">
+            </div>
+            <button type="submit" class="btn btn-sm btn-outline-secondary" id="segment-create-submit" disabled>+ Добавить диапазон из отмеченных точек</button>
+            <span class="text-muted small" id="segment-selection-hint">
+                Отметь галочкой «→ диап.» точки для нового диапазона в таблице ниже — от/до подставятся сами
+                (можно поправить вручную, например для экстраполяции).
+            </span>
+        </form>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-lg-9">
+            <div id="curve-chart"></div>
+        </div>
+        <div class="col-lg-3">
+            <div class="card">
+                <div class="card-body py-2">
+                    <dl class="row mb-0 small">
+                        <dt class="col-6">k</dt><dd class="col-6" id="stat-k">{{ curve.k|floatformat:4|default:"—" }}</dd>
+                        <dt class="col-6">b</dt><dd class="col-6" id="stat-b">{{ curve.b|floatformat:4|default:"—" }}</dd>
+                        <dt class="col-6">R²</dt><dd class="col-6" id="stat-r2">{{ curve.r2|floatformat:4|default:"—" }}</dd>
+                        <dt class="col-6">Статус</dt><dd class="col-6" id="stat-status">{{ curve.get_status_display }}</dd>
+                    </dl>
+                    <div id="stat-error" class="text-danger small {% if not curve.fit_error %}d-none{% endif %}">{{ curve.fit_error }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="save-error" class="alert alert-danger d-none"></div>
+
+    <div class="table-responsive">
+        <table class="table table-sm table-bordered bg-white align-middle" id="points-table-el" style="table-layout: fixed;">
+            <colgroup>
+                <col style="width: 2.5rem;">
+                <col style="width: 12rem;">
+                <col style="width: 6rem;">
+                <col style="width: 7rem;">
+                <col style="width: 7rem;">
+                <col style="width: 6rem;">
+                <col style="width: 6rem;">
+                <col style="width: 5rem;">
+                <col style="width: 4rem;">
+                <col style="width: 2.5rem;">
+            </colgroup>
+            <thead>
+            <tr>
+                <th></th>
+                <th>Name</th>
+                <th>Std.Conc</th>
+                <th>Area</th>
+                <th>IS Area</th>
+                <th>Response</th>
+                <th>Conc</th>
+                <th>Dev%</th>
+                <th title="Отметить для нового диапазона">→ диап.</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody id="points-table"></tbody>
+        </table>
+    </div>
+    <button type="button" id="add-point" class="btn btn-sm btn-outline-secondary">+ Точка</button>
+
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+    <script>
+        let points = {{ points_json|safe }};
+        const segments = {{ segments_json|safe }};
+        const updateUrl = "{% url 'curve-update-points' curve.pk %}";
+        const csrfToken = "{{ csrf_token }}";
+
+        function breakpointShapes() {
+            // Vertical dashed line at every boundary between consecutive segments.
+            return segments.slice(0, -1).map(seg => ({
+                type: "line",
+                x0: seg.conc_max, x1: seg.conc_max,
+                yref: "paper", y0: 0, y1: 1,
+                line: {color: "#dc3545", width: 1, dash: "dash"},
+            }));
+        }
+
+        function fmt(value, digits) {
+            return (value === null || value === undefined || value === "") ? "—" : Number(value).toFixed(digits ?? 4);
+        }
+
+        function fitLineTrace(k, b) {
+            if (k === null || b === null) {
+                return {x: [], y: [], mode: "lines", name: "фит", line: {color: "#0d6efd"}};
+            }
+            const xs = points.map(p => parseFloat(p.std_conc)).filter(v => !isNaN(v));
+            const xMax = Math.max(0, ...xs) * 1.1 || 1;
+            const lineX = Array.from({length: 50}, (_, i) => xMax * i / 49);
+            const lineY = lineX.map(x => k * x + b);
+            return {x: lineX, y: lineY, mode: "lines", name: `y = ${k.toFixed(4)}x + ${b.toFixed(4)}`, line: {color: "#0d6efd"}};
+        }
+
+        function pointsTrace() {
+            return {
+                x: points.map(p => parseFloat(p.std_conc)),
+                y: points.map(p => p.response === null || p.response === undefined ? null : parseFloat(p.response)),
+                text: points.map(p => p.name || ""),
+                hovertemplate: "%{text}<br>Std.Conc=%{x}<br>Response=%{y}<extra></extra>",
+                mode: "markers",
+                name: "точки",
+                marker: {
+                    size: 11,
+                    color: points.map(p => p.included ? "#198754" : "#adb5bd"),
+                    line: {width: 1, color: "#333"},
+                },
+            };
+        }
+
+        function renderChart(k, b) {
+            Plotly.react(
+                "curve-chart",
+                [pointsTrace(), fitLineTrace(k, b)],
+                {
+                    margin: {t: 20},
+                    xaxis: {title: "Std.Conc"},
+                    yaxis: {title: "Response"},
+                    template: "plotly_white",
+                    showlegend: true,
+                    shapes: breakpointShapes(),
+                },
+                {responsive: true}
+            );
+
+            const chartDiv = document.getElementById("curve-chart");
+            chartDiv.removeAllListeners && chartDiv.removeAllListeners("plotly_click");
+            chartDiv.on("plotly_click", function (data) {
+                const clicked = data.points[0];
+                if (clicked.curveNumber !== 0) return; // only the points trace is clickable
+                const index = clicked.pointIndex;
+                points[index].included = !points[index].included;
+                renderTable();
+                renderChart(currentK, currentB);
+                saveAllPoints();
+            });
+        }
+
+        // Which point indices are checked "→ диап." for the next manual
+        // segment — separate from the whole-curve "included" flag, since
+        // picking points for one range is a different question from
+        // whether a point belongs in the curve's overall fit at all.
+        const segmentSelection = new Set();
+
+        function updateSegmentFormDefaults() {
+            const selected = points.filter((_, i) => segmentSelection.has(i));
+            const stds = selected.map(p => parseFloat(p.std_conc)).filter(v => !isNaN(v));
+            if (stds.length) {
+                document.getElementById("segment-conc-min").value = Math.min(...stds);
+                document.getElementById("segment-conc-max").value = Math.max(...stds);
+            }
+            document.getElementById("segment-selection-hint").textContent =
+                stds.length ? `Отмечено точек: ${stds.length}.` :
+                "Отметь галочкой «→ диап.» точки для нового диапазона в таблице ниже — от/до подставятся сами (можно поправить вручную, например для экстраполяции).";
+            // No points picked -> nothing to submit; a range is always built
+            // from an explicit point selection, never from от/до alone.
+            document.getElementById("segment-create-submit").disabled = segmentSelection.size === 0;
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById("points-table");
+            tbody.innerHTML = "";
+            points.forEach((p, index) => {
+                const tr = document.createElement("tr");
+                tr.className = p.included ? "" : "point-row excluded";
+                tr.innerHTML = `
+                    <td class="text-center"><input type="checkbox" class="form-check-input f-included" ${p.included ? "checked" : ""}></td>
+                    <td><input type="text" class="form-control form-control-sm f-name" value="${(p.name ?? "").replace(/"/g, "&quot;")}" placeholder="wash / blank / ..."></td>
+                    <td><input type="number" step="any" class="form-control form-control-sm f-std" value="${p.std_conc ?? ""}"></td>
+                    <td><input type="number" step="any" class="form-control form-control-sm f-area" value="${p.area ?? ""}"></td>
+                    <td><input type="number" step="any" class="form-control form-control-sm f-isarea" value="${p.is_area ?? ""}"></td>
+                    <td class="text-muted">${fmt(p.response)}</td>
+                    <td class="text-muted">${fmt(p.conc)}</td>
+                    <td class="text-muted">${fmt(p.dev_pct, 1)}</td>
+                    <td class="text-center"><input type="checkbox" class="form-check-input f-in-segment" ${segmentSelection.has(index) ? "checked" : ""}></td>
+                    <td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger f-delete">&times;</button></td>
+                `;
+                tbody.appendChild(tr);
+
+                tr.querySelector(".f-included").addEventListener("change", (e) => {
+                    points[index].included = e.target.checked;
+                    saveAllPoints();
+                });
+                ["f-name", "f-std", "f-area", "f-isarea"].forEach((cls, fieldIdx) => {
+                    const field = ["name", "std_conc", "area", "is_area"][fieldIdx];
+                    tr.querySelector("." + cls).addEventListener("change", (e) => {
+                        points[index][field] = e.target.value;
+                        saveAllPoints();
+                    });
+                });
+                tr.querySelector(".f-in-segment").addEventListener("change", (e) => {
+                    if (e.target.checked) segmentSelection.add(index); else segmentSelection.delete(index);
+                    updateSegmentFormDefaults();
+                });
+                tr.querySelector(".f-delete").addEventListener("click", () => {
+                    points.splice(index, 1);
+                    segmentSelection.clear();
+                    renderTable();
+                    saveAllPoints();
+                });
+            });
+        }
+
+        let currentK = {{ curve.k|default_if_none:"null" }};
+        let currentB = {{ curve.b|default_if_none:"null" }};
+
+        function showError(message) {
+            const box = document.getElementById("save-error");
+            box.textContent = message;
+            box.classList.remove("d-none");
+        }
+
+        function clearError() {
+            document.getElementById("save-error").classList.add("d-none");
+        }
+
+        function applyResult(result) {
+            points = result.points;
+            currentK = result.k;
+            currentB = result.b;
+
+            document.getElementById("stat-k").textContent = fmt(result.k);
+            document.getElementById("stat-b").textContent = fmt(result.b);
+            document.getElementById("stat-r2").textContent = fmt(result.r2);
+            document.getElementById("stat-status").textContent = result.status_display;
+
+            const errorBox = document.getElementById("stat-error");
+            if (result.error) {
+                errorBox.textContent = result.error;
+                errorBox.classList.remove("d-none");
+            } else {
+                errorBox.classList.add("d-none");
+            }
+
+            clearError();
+            renderChart(currentK, currentB);
+            renderTable();
+        }
+
+        function saveAllPoints() {
+            const payload = points.map(p => ({
+                name: p.name,
+                std_conc: p.std_conc,
+                area: p.area,
+                is_area: p.is_area,
+                included: p.included,
+            }));
+
+            fetch(updateUrl, {
+                method: "POST",
+                headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken},
+                body: JSON.stringify({points: payload}),
+            })
+                .then(r => {
+                    if (!r.ok) return r.text().then(t => { throw new Error(t); });
+                    return r.json();
+                })
+                .then(applyResult)
+                .catch(err => showError(err.message || "Не удалось сохранить изменения."));
+        }
+
+        document.getElementById("add-point").addEventListener("click", () => {
+            points.push({name: "", std_conc: "", area: "", is_area: "", response: null, conc: null, dev_pct: null, included: true});
+            renderTable();
+        });
+
+        document.getElementById("segment-create-form").addEventListener("submit", () => {
+            document.getElementById("segment-point-indices").value = Array.from(segmentSelection).join(",");
+        });
+
+        function makeColumnsResizable(table) {
+            const cols = table.querySelectorAll("colgroup col");
+            const headers = table.querySelectorAll("thead th");
+            headers.forEach((th, i) => {
+                if (i === 0 || i === headers.length - 1) return; // skip checkbox / delete columns
+                const handle = document.createElement("div");
+                handle.className = "col-resize-handle";
+                th.style.position = "relative";
+                th.appendChild(handle);
+
+                handle.addEventListener("mousedown", (e) => {
+                    e.preventDefault();
+                    const startX = e.pageX;
+                    const startWidth = th.getBoundingClientRect().width;
+                    document.body.style.cursor = "col-resize";
+                    document.body.style.userSelect = "none";
+
+                    function onMove(ev) {
+                        const newWidth = Math.max(40, startWidth + (ev.pageX - startX));
+                        cols[i].style.width = newWidth + "px";
+                    }
+                    function onUp() {
+                        document.removeEventListener("mousemove", onMove);
+                        document.removeEventListener("mouseup", onUp);
+                        document.body.style.cursor = "";
+                        document.body.style.userSelect = "";
+                    }
+                    document.addEventListener("mousemove", onMove);
+                    document.addEventListener("mouseup", onUp);
+                });
+            });
+        }
+
+        renderChart(currentK, currentB);
+        renderTable();
+        makeColumnsResizable(document.getElementById("points-table-el"));
+    </script>
+{% endblock %}

@@ -1,0 +1,104 @@
+{% extends "analayzer/base.html" %}
+{% block title %}{{ batch.name }}{% endblock %}
+{% block content %}
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h1 class="h3 mb-1">{{ batch.name }}</h1>
+            <p class="text-muted mb-0">
+                Создано {{ batch.created_by|default:"—" }}, {{ batch.created_at|date:"d.m.Y H:i" }}
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <form method="post" action="{% url 'batch-bulk-approve' batch.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success"
+                        {% if not status_counts.ok %}disabled{% endif %}>
+                    Подтвердить все «ок» ({{ status_counts.ok }})
+                </button>
+            </form>
+            <a href="{% url 'batch-export' batch.pk %}" class="btn btn-outline-primary">Скачать Excel</a>
+            <form method="post" action="{% url 'batch-delete' batch.pk %}"
+                  data-confirm-message="Удалить батч «{{ batch.name }}» вместе со всеми файлами и кривыми? Это необратимо.">
+                {% csrf_token %}
+                <button type="button" class="btn btn-outline-danger btn-delete-batch">Удалить батч</button>
+            </form>
+        </div>
+    </div>
+
+    {% if uploads %}
+        <div class="card mb-4">
+            <div class="card-header">Загруженные файлы</div>
+            <ul class="list-group list-group-flush">
+                {% for upload in uploads %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>
+                            <strong>{{ upload.label }}</strong>
+                            <span class="text-muted small">({{ upload.profile.name }}{% if upload.name_filter %}, фильтр «{{ upload.name_filter }}»{% endif %})</span>
+                        </span>
+                        {% if upload.parsed_ok %}
+                            <span class="badge bg-success">разобран</span>
+                        {% else %}
+                            <span class="badge bg-danger" title="{{ upload.error_message }}">ошибка разбора</span>
+                        {% endif %}
+                    </li>
+                    {% if not upload.parsed_ok and upload.error_message %}
+                        <li class="list-group-item text-danger small">{{ upload.error_message }}</li>
+                    {% endif %}
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    <div class="mb-3 d-flex gap-2">
+        <span class="badge text-bg-secondary status-badge">Нужна проверка: {{ status_counts.needs_review }}</span>
+        <span class="badge text-bg-info status-badge">Ок: {{ status_counts.ok }}</span>
+        <span class="badge text-bg-success status-badge">Подтверждено: {{ status_counts.approved }}</span>
+        <span class="badge text-bg-dark status-badge">Отклонено: {{ status_counts.rejected }}</span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover bg-white align-middle">
+            <thead>
+            <tr>
+                <th>Компаунд</th>
+                <th>Источник</th>
+                <th>k</th>
+                <th>b</th>
+                <th>R²</th>
+                <th>Статус</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for curve in curves %}
+                <tr>
+                    <td>{{ curve.compound.name }}</td>
+                    <td>{{ curve.raw_upload.label }}</td>
+                    <td>{{ curve.k|floatformat:4|default:"—" }}</td>
+                    <td>{{ curve.b|floatformat:4|default:"—" }}</td>
+                    <td>{{ curve.r2|floatformat:4|default:"—" }}</td>
+                    <td>
+                        {% if curve.status == "approved" %}
+                            <span class="badge text-bg-success status-badge">{{ curve.get_status_display }}</span>
+                        {% elif curve.status == "rejected" %}
+                            <span class="badge text-bg-dark status-badge">{{ curve.get_status_display }}</span>
+                        {% elif curve.status == "ok" %}
+                            <span class="badge text-bg-info status-badge">{{ curve.get_status_display }}</span>
+                        {% else %}
+                            <span class="badge text-bg-warning status-badge">{{ curve.get_status_display }}</span>
+                        {% endif %}
+                        {% if curve.fit_error %}
+                            <div class="text-danger small">{{ curve.fit_error }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'curve-review' curve.pk %}" class="btn btn-sm btn-outline-secondary">Открыть</a>
+                    </td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="7" class="text-muted">Нет ни одной кривой — проверь, что файлы разобрались без ошибок.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endblock %}

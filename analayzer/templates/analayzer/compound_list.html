@@ -1,0 +1,35 @@
+{% extends "analayzer/base.html" %}
+{% block title %}Сравнение по веществам{% endblock %}
+{% block content %}
+    <h1 class="h3 mb-2">Сравнение по веществам</h1>
+    <p class="text-muted small mb-4">
+        Выбери вещество — откроется график всех его калибровочных кривых по материалам, диапазоны и
+        управление объединёнными диапазонами. Реальные пробы смотри и редактируй в разделе «Пробы» →
+        конкретная партия.
+    </p>
+
+    {% if compounds %}
+        <table class="table table-hover bg-white align-middle">
+            <thead>
+            <tr>
+                <th>Вещество</th>
+                <th>Кривых в базе</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for compound in compounds %}
+                <tr>
+                    <td><a href="{% url 'compound-compare' compound.pk %}">{{ compound.name }}</a></td>
+                    <td>{{ compound.curve_count }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'compound-compare' compound.pk %}" class="btn btn-sm btn-outline-secondary">Открыть</a>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="text-muted">Пока нет ни одной обработанной калибровки.</p>
+    {% endif %}
+{% endblock %}

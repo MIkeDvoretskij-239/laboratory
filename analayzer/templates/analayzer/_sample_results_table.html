@@ -1,0 +1,150 @@
+{% comment %}
+Shared editable sample-results table, included both from the per-batch view
+(all compounds mixed) and the per-batch-per-compound workspace. Expects in
+context: `results` (SampleResult queryset/list) and
+`segments_by_compound_json` (dict compound_id -> [{id,kind,label}] JSON
+string — kind is "segment" or "merged", since the two share an id space).
+Each include must use a unique `table_id` so multiple copies on one page
+(shouldn't normally happen, but keeps this safe) don't collide.
+{% endcomment %}
+<div class="table-responsive">
+    <table class="table table-hover bg-white align-middle" style="table-layout: fixed;" id="{{ table_id|default:"samples-table-el" }}">
+        <colgroup>
+            <col style="width: 11rem;">
+            <col style="width: 7rem;">
+            <col style="width: 7rem;">
+            <col style="width: 7rem;">
+            <col style="width: 6rem;">
+            <col style="width: 12rem;">
+            <col style="width: 6rem;">
+            <col style="width: 11rem;">
+            <col style="width: 3rem;">
+        </colgroup>
+        <thead>
+        <tr>
+            <th>Проба</th>
+            <th>Вещество</th>
+            <th>Area</th>
+            <th>IS Area</th>
+            <th>Response</th>
+            <th>Сегмент калибровки</th>
+            <th>Концентрация</th>
+            <th>Статус</th>
+            <th></th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for result in results %}
+            <tr data-id="{{ result.pk }}" data-compound-id="{{ result.compound_id|default:"" }}"
+                data-matched-segment-key="{% if result.matched_segment_id %}segment:{{ result.matched_segment_id }}{% elif result.matched_merged_segment_id %}merged:{{ result.matched_merged_segment_id }}{% endif %}">
+                <td><input type="text" class="form-control form-control-sm f-name" value="{{ result.name|default:"" }}" placeholder="—"></td>
+                <td>{{ result.compound.name|default:result.raw_compound_name|default:"—" }}</td>
+                <td><input type="number" step="any" class="form-control form-control-sm f-area" value="{{ result.area|default:"" }}"></td>
+                <td><input type="number" step="any" class="form-control form-control-sm f-isarea" value="{{ result.is_area|default:"" }}"></td>
+                <td class="text-muted f-response">{{ result.response|floatformat:4|default:"—" }}</td>
+                <td>
+                    <select class="form-select form-select-sm f-segment-select">
+                        <option value="">— авто —</option>
+                    </select>
+                </td>
+                <td class="f-conc">{{ result.computed_conc|floatformat:4|default:"—" }}</td>
+                <td class="f-status">
+                    <div class="d-flex flex-wrap align-items-center gap-1">
+                        <span class="badge status-badge {% if result.status == "matched" %}text-bg-success{% elif result.status == "out_of_range" %}text-bg-warning{% elif result.status == "no_calibration" %}text-bg-dark{% else %}text-bg-secondary{% endif %}">{{ result.get_status_display }}</span>
+                        {% if result.details.manual_override %}<span class="badge text-bg-light border text-muted small">вручную</span>{% endif %}
+                    </div>
+                    {% if result.details.resolve_error or result.details.parse_error %}
+                        <div class="text-danger small">{{ result.details.resolve_error|default:result.details.parse_error }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger f-delete">&times;</button></td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="9" class="text-muted">Нет ни одной пробы.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+    (function () {
+        const csrfToken = "{{ csrf_token }}";
+        const segmentsByCompound = {{ segments_by_compound_json|safe }};
+        const STATUS_BADGE_CLASS = {matched: "text-bg-success", out_of_range: "text-bg-warning", no_calibration: "text-bg-dark"};
+        const tableEl = document.getElementById("{{ table_id|default:"samples-table-el" }}");
+        if (!tableEl) return;
+
+        function fmt(value, digits) {
+            return (value === null || value === undefined || value === "") ? "—" : Number(value).toFixed(digits ?? 4);
+        }
+
+        function applyResult(row, result) {
+            row.querySelector(".f-response").textContent = fmt(result.response);
+            row.querySelector(".f-conc").textContent = fmt(result.computed_conc);
+
+            const select = row.querySelector(".f-segment-select");
+            select.value = result.matched_segment_key || "";
+
+            const statusCell = row.querySelector(".f-status");
+            const badgeClass = STATUS_BADGE_CLASS[result.status] || "text-bg-secondary";
+            statusCell.innerHTML = `<div class="d-flex flex-wrap align-items-center gap-1">` +
+                `<span class="badge status-badge ${badgeClass}">${result.status_display}</span>` +
+                (result.manual_override ? `<span class="badge text-bg-light border text-muted small">вручную</span>` : "") +
+                `</div>` +
+                (result.error ? `<div class="text-danger small"></div>` : "");
+            if (result.error) statusCell.querySelector(".text-danger").textContent = result.error;
+        }
+
+        tableEl.querySelectorAll("tbody tr[data-id]").forEach(row => {
+            const id = row.dataset.id;
+
+            const select = row.querySelector(".f-segment-select");
+            const candidates = segmentsByCompound[row.dataset.compoundId] || [];
+            candidates.forEach(seg => {
+                const opt = document.createElement("option");
+                opt.value = `${seg.kind}:${seg.id}`;
+                opt.textContent = seg.label;
+                select.appendChild(opt);
+            });
+            select.value = row.dataset.matchedSegmentKey || "";
+
+            function save() {
+                const payload = {
+                    name: row.querySelector(".f-name").value,
+                    area: row.querySelector(".f-area").value,
+                    is_area: row.querySelector(".f-isarea").value,
+                };
+                fetch(`/sample-results/${id}/update/`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken},
+                    body: JSON.stringify(payload),
+                })
+                    .then(r => r.json())
+                    .then(result => applyResult(row, result));
+            }
+
+            row.querySelectorAll(".f-name, .f-area, .f-isarea").forEach(input => {
+                input.addEventListener("change", save);
+            });
+
+            select.addEventListener("change", () => {
+                fetch(`/sample-results/${id}/set-segment/`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": csrfToken},
+                    body: new URLSearchParams({segment_key: select.value}),
+                })
+                    .then(r => r.json())
+                    .then(result => applyResult(row, result));
+            });
+
+            row.querySelector(".f-delete").addEventListener("click", () => {
+                fetch(`/sample-results/${id}/delete/`, {
+                    method: "POST",
+                    headers: {"X-CSRFToken": csrfToken},
+                }).then(r => {
+                    if (r.ok) row.remove();
+                });
+            });
+        });
+    })();
+</script>
