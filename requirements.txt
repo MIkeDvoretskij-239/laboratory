@@ -1,0 +1,5 @@
+Django==6.0.7
+numpy==2.5.0
+pandas==3.0.3
+openpyxl==3.1.5
+waitress==3.0.2

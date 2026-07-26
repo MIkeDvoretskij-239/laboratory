@@ -18,6 +18,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.urls import include, path
 
 urlpatterns = [
@@ -29,3 +30,6 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # runserver serves /static/ automatically; waitress (used by run_app.py
+    # for a normal double-click launch) doesn't, so it needs this too.
+    urlpatterns += staticfiles_urlpatterns()
